@@ -1,0 +1,4 @@
+"0","sig <- list(RandomForest=varImp(model_rf),KNN=varImp(model_knn),LogReg=varImp(model_lr),NeuralNetwork=varImp(model_nn),SVM=varImp(model_svm))"
+"0","sig"
+"1","$RandomForest
+"

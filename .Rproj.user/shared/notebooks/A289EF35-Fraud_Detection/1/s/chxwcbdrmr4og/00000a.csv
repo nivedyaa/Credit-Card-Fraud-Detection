@@ -1,0 +1,1 @@
+"0","plot(roc(testing$class,pred_svm_prob), print.auc = TRUE, col = ""green"", print.auc.y = .1, add = TRUE)"

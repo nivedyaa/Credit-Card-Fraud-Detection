@@ -1,0 +1,1 @@
+"0","plot(roc(testing$class,pred_nn_prob), print.auc = TRUE, col = ""black"", print.auc.y = .2, add = TRUE)"

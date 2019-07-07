@@ -1,0 +1,1011 @@
+---
+title: "DuPont Data Augmentation Research"
+author: "CompassRed Data Labs"
+output: 
+  html_document:
+    theme: yeti
+    highlight: textmate
+    toc: TRUE
+    toc_float: TRUE
+    df_print: paged
+    css: compassred.css
+---
+
+
+<script>
+  $(document).ready(function() {
+    $('#TOC').parent().prepend('<div id=\"nav_logo\"><img src=\"CompassRed primary.svg\"></div>');
+  });
+</script>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+#**Overview**
+
+Our goal is to find data and important factors that can augment the volume demand of water based products used in Ion Exchange Technology.
+
+Our research was mainly based on collecting external dataset and also look through some of the *DuPont* datasets and the industries they focus on.
+Here are some of the important industries that DuPont and our research focuses on withing the different sectors (Industrial, Residential and Commercial):
+
+- Petroleum
+- Gasoline
+- Electricty
+- Natural Gas
+- Coal
+- Mineral
+
+Following are some of the data sources that we used:
+- [GDP](http://www.principalglobalindicators.org/regular.aspx?key=60942005)
+- [Population, Technology Exports, Foreign Investment, CPI](https://databank.worldbank.org/indicator/SP.POP.TOTL/1ff4a498/Popular-Indicators#)
+
+And our Industry Specific Research:
+- [Coal and Petroleum](https://databank.worldbank.org/source/sustainable-development-goals-(sdgs)#)
+- [Mineral and Electricity](https://databank.worldbank.org/source/world-development-indicators)
+-   [Hydrocarbon and Natural Gas](https://www.eia.gov/dnav/pet/hist/LeafHandler.ashx?n=PET&s=MNGSTUS1&f=M)
+
+
+#**Importing the libraries**
+
+```{r}
+library(here)
+library(tidyverse)
+library(tidyr)
+library(ggplot2)
+library(plotly)
+library(tibble)
+library(tidyr)
+library(dplyr)
+library(janitor)
+library(scales)
+library(rmarkdown)
+library(rlist)
+require(zoo)
+library(broom)
+```
+
+#**Dataset**
+
+1. Dupont Historical Sale 
+2. Global Economic Indicatiors 
+3. Industry Indicators
+```{r}
+source(here('Script', 'Formatting.R'))
+
+#Global Economy
+geco <- read_csv(here("Data","global_economy.csv")) 
+geco$Value <- as.numeric(geco$Value)
+geco <- geco[geco$Year!=2018,]
+
+#Stocks Traded
+ind <- read_csv(here("Data","Stockdomestic.csv")) 
+ind <- subset(ind, select = c(-9))
+ind1 <- ind %>%
+        gather(key = Year, value = "Stocks traded, total value (% of GDP)", 5:8)
+ind1 <- ind1[,-c(2,3,4)]
+
+
+#DuPont Sales
+dupsale <- read_csv(here("Data","1 Historical Sales - 2015 to 2017.xlsx - SAPBW_DOWNLOAD.csv")) 
+dupsale <- dupsale %>% mutate(Date = as.Date(paste(`Calendar month`,"01",`Calendar year`), "%m %d %Y")) %>% 
+     mutate(Volume_Demand = as.numeric(gsub(",","",(gsub("\\..*","",Volume)))))
+
+Region <- read_csv(here("Data","Region.csv"))
+Region <- Region[,1:2]
+
+
+spread_geco <- geco %>% 
+    select(Country.Name, Factor, Value,Year) %>% 
+  spread(Factor, Value)
+spread_geco <- spread_geco[spread_geco$Year!=2018,]
+#spread_geco$GDP <- scale(spread_geco$GDP)
+#spread_geco$population <- scale(spread_geco$population)
+
+industry <- read_csv(here("Data","Industry.csv"))
+industry <- industry[,1:7]
+industry[industry==".."] <- 0
+
+write.csv(with(droplevels(dupsale), list(levels = levels(as.factor(dupsale$Region)), nlevels = nlevels(as.factor(dupsale$Region)))), "Region.csv")
+#Regions and Countries
+
+GDP_PPP <- read_csv(here("Data","GDP_PPP.csv"))
+GDP_PPP <- GDP_PPP[,1:5]
+GDP_PPP[GDP_PPP=="-"] <- 0
+GDP_PPP$`GDP (PPP) per person employed in Agriculture` <- as.numeric(GDP_PPP$`GDP (PPP) per person employed in Agriculture`)
+names(GDP_PPP)[names(GDP_PPP) == 'GDP (PPP) per person employed in Agriculture'] <- 'Agriculture Sector'
+names(GDP_PPP)[names(GDP_PPP) == 'GDP (PPP) per person employed in Industry'] <- 'Industry Sector'
+names(GDP_PPP)[names(GDP_PPP) == 'GDP (PPP) per person employed in Services'] <- 'Services Sector'
+#arrange(Overall, desc(Overall$Year))
+ 
+Overall <- merge(spread_geco,ind1, by.x = c("Country.Name", "Year"), by.y = c("Country Name","Year"), all = T)
+Overall<- Overall[Overall$Country!="World",]
+geco_region <- merge(Region, Overall, by.x = c("Country"), by.y = c("Country.Name"), all = T) 
+
+#geco_region %>% 
+#  filter(is.na(Region)) %>% 
+#  group_by(Country) %>% 
+#  summarise()
+
+
+
+master<- merge(dupsale, geco_region, by.x = c("Region","Calendar year"), by.y = c("Region","Year"), all = T)
+master <- na.omit(master)
+```
+
+#**Correlation**
+
+  Correlation of Volume demand with Global Economic Factors
+```{r}
+cor_data <- master[,c(14,16:22)]
+cor_data <- as.data.frame(scale(cor_data))
+correlation <- cor(cor_data)
+broom::tidy(correlation[,1])
+```
+
+#**Significant Indicatiors**
+
+Customer Price Index,GDP,High Technology Exports and Population were the significant indicators influencing the Volume   Demand. These factors have are highly significant (pvalue less than 0.05) based on the linear regression analysis.
+```{r}
+c <- lm(Volume_Demand~., cor_data)
+broom::tidy(summary(c))
+```
+
+
+
+
+
+
+#**Most sold type of filter**
+
+Ion Exchange Resins were the most shipped type of water filters.
+```{r}
+Top_ValueCentre <- dupsale %>% 
+  mutate(`Calendar year` = as.factor(`Calendar year`)) %>% 
+    group_by(ValueCenter, `Calendar year`) %>% 
+    count() %>% 
+    arrange(desc(n)) %>% 
+  mutate(Units_Shipped=n) %>% 
+
+  ggplot(aes(x=`Calendar year`,
+             y = Units_Shipped,  label = Units_Shipped))+
+  geom_point( color = CR_red)+
+  geom_line( color = CR_red)+
+   geom_text(size = 4, position = position_stack(vjust = 0.5))+
+  labs(title = "Type of Filters and Units Shipped")+
+  facet_wrap(~ ValueCenter, ncol = 1, "free_y",strip.position = "top")+
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5, vjust = 0.5),legend.position = "none")+
+ # scale_x_discrete()+
+  xlab("Years")
+  
+Top_ValueCentre
+```
+
+#**Most sold GMID**
+
+Ion Exchange Resins were the most shipped type of water filters.
+
+```{r}
+TOP_GMID <- dupsale %>% 
+    group_by(GMID, ValueCenter) %>% 
+    count() %>% 
+    arrange(desc(n)) 
+    
+TOP_GMID <- TOP_GMID[1:10,]
+TOP_GMID_Plot <- TOP_GMID %>%
+   mutate(Units_Shipped=n) %>% 
+              ggplot(aes(x=GMID,
+                         y =  Units_Shipped , label = paste("(",ValueCenter,",",n,")")))+
+              geom_histogram(stat = "identity", fill = CR_red)+
+              theme(axis.text.x = element_text(angle = 45, hjust = 1),legend.position = "none")+
+              geom_text(size = 3, position = position_stack(vjust = 0.5), angle = 90)+
+              labs(title = "Top GMID shipped")
+            
+TOP_GMID_Plot              
+```
+
+#**Global ION Exchange Resins Sale**
+
+Ion Exchange Resins was highly sold in Asia Pacific, Europe/Middle East/Africa and North America
+
+```{r}
+
+ION <- dupsale %>% 
+                            filter(ValueCenter == "ION EXCHANGE RESINS") %>%
+                            select(Date,Volume_Demand, Area, ValueCenter) %>% 
+                            group_by(Area, Date) %>%
+                            mutate(Volume_Demand = sum(Volume_Demand)) %>% 
+                            ggplot(aes(x=Date,
+                                        y = Volume_Demand))+
+                            geom_point(color = CR_red)+
+                            geom_line(color = CR_red)+
+                            scale_y_continuous(labels = scales::comma)+
+                            labs(title = "Sale of ION EXCHANGE RESINS")+
+                            xlab("Year")+
+                            ylab("Volume Demand")+
+                            facet_wrap(~Area, ncol = 2, "free_y")+
+                            theme(axis.text.x = element_text(angle = 45, hjust = 1),axis.title.x = element_text(hjust = 0.5),
+                                  legend.position = "none")
+ION
+#ggplotly(ION)
+```
+
+#**Asia Pacific Area**
+
+Ion Exchange Sale in Asia Pacific Area
+
+```{r}
+ion_asia <- dupsale %>% 
+          filter(Area == "ASIA PACIFIC" & ValueCenter== "ION EXCHANGE RESINS" ) %>%
+          select(Date,Volume_Demand, Region ) %>% 
+           group_by(Region, Date) %>%
+          mutate(Volume_Demand = sum(Volume_Demand)) %>% 
+           ggplot(aes(x=Date,
+                    y = Volume_Demand))+
+          geom_point(color = CR_red)+
+          geom_line(color = CR_red)+
+          scale_y_continuous(labels = scales::comma)+
+          labs(title = "ION EXCHANGE RESINS-Asia pacific Sale")+
+           xlab("Year")+
+            ylab("Volume")+
+            facet_wrap(~Region, ncol = 2, "free_y")+
+            theme(axis.text.x = element_text(angle = 45, hjust = 1),
+           legend.position = "none")
+ion_asia 
+
+```
+
+##**Asia Southeast**
+
+Ion Exchange Sale in Asia Southeast Region
+
+```{r}
+CPI_Vol <- master %>% 
+   filter(Region == "ASIA SOUTHEAST" & ValueCenter== "ION EXCHANGE RESINS" ) %>%
+  select(Region, Country, `Calendar year`, Volume_Demand, `Customer Price INdex`) %>%
+ # mutate(Volume_Demand = scale(Volume_Demand),`Customer Price INdex` = scale(`Customer Price INdex`)) %>%
+  gather(Indicator, Value, 4:5) %>% 
+  filter(!is.na(Value)) %>% 
+  group_by(Country, `Calendar year`,Indicator) %>% 
+  mutate(Value = sum(Value)) %>% 
+  ggplot(aes(x=Country,
+             y =Value))+
+  geom_bar(stat = "identity", fill = CR_red)+
+            theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 7),
+           legend.position = "none")+
+  facet_grid(Indicator~`Calendar year`, scales = "free_y")+
+  scale_y_continuous(labels = scales::comma)+
+  labs(title = "Customer Price Index vs Volume in Asia Southeast")
+
+GDP_Vol <- master %>% 
+   filter(Region == "ASIA SOUTHEAST" & ValueCenter== "ION EXCHANGE RESINS" ) %>%
+  select(Region, Country, `Calendar year`, Volume_Demand, GDP) %>% 
+ # mutate(Volume_Demand = scale(Volume_Demand),GDP = scale(GDP)) %>%
+  gather(Indicator, Value, 4:5) %>% 
+  filter(!is.na(Value)) %>% 
+  group_by(Country, `Calendar year`,Indicator) %>% 
+  mutate(Value = sum(Value)) %>% 
+  ggplot(aes(x=Country,
+             y =Value))+
+  geom_bar(stat = "identity", fill = CR_red)+
+            theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 7),
+           legend.position = "none")+
+  facet_grid(Indicator~`Calendar year`, scales = "free_y")+
+  scale_y_continuous(labels = scales::comma)+
+  labs(title = "GDP vs Volume in Asia Southeast")
+
+
+HTE_Vol <- master %>% 
+   filter(Region == "ASIA SOUTHEAST" & ValueCenter== "ION EXCHANGE RESINS" ) %>%
+  select(Region, Country, `Calendar year`, Volume_Demand, `High Technology Exports`) %>% 
+#  mutate(Volume_Demand = scale(Volume_Demand),`High Technology Exports` = scale(`High Technology Exports`)) %>% 
+  gather(Indicator, Value, 4:5) %>% 
+  filter(!is.na(Value)) %>% 
+  group_by(Region,Country, `Calendar year`,Indicator) %>% 
+  mutate(Value = sum(Value)) %>% 
+  ggplot(aes(x=Country,
+             y =Value))+
+  geom_bar(stat = "identity", fill = CR_red)+
+            theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 7),
+           legend.position = "none")+
+  facet_grid(Indicator~`Calendar year`, scales = "free_y")+
+  scale_y_continuous(labels = scales::comma)+
+  labs(title = "High Technology Exports vs Volume in Asia Southeast")
+
+
+
+Pop_Vol <- master %>% 
+   filter(Region == "ASIA SOUTHEAST" & ValueCenter== "ION EXCHANGE RESINS" ) %>%
+  select(Region, Country, `Calendar year`, Volume_Demand, population) %>% 
+ # mutate(Volume_Demand = scale(Volume_Demand),population = scale(population)) %>% 
+  gather(Indicator, Value, 4:5) %>% 
+ filter(!is.na(Value)) %>% 
+  group_by(Region,Country, `Calendar year`,Indicator) %>% 
+  mutate(Value = sum(Value)) %>% 
+  ggplot(aes(x=Country,
+             y =Value))+
+  geom_bar(stat = "identity", fill = CR_red)+
+            theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 7),
+           legend.position = "none")+
+  facet_grid(Indicator~`Calendar year`, scales = "free_y")+
+  scale_y_continuous(labels = scales::comma)+
+  labs(title = "Population vs Volume in Asia Southeast")
+
+
+CPI_Vol
+GDP_Vol
+HTE_Vol
+Pop_Vol
+
+GDP_Vol_Indepth <- industry %>% 
+  gather(Type, Value, 2:7) %>% 
+  filter(Country == "Indonesia") %>% 
+  mutate(Value=as.numeric(Value),
+         Type = fct_reorder(Type, Value)) %>% 
+  ggplot(aes(x=Type,
+             y=Value))+
+  geom_col(fill = CR_red)+
+  coord_flip()+
+  labs(title = "GDP% in Indonesia")
+GDP_Vol_Indepth
+
+GDP_Vol_Indepth2 <- GDP_PPP %>% 
+  gather(Type, Value, 3:5) %>% 
+  filter(Country == "Indonesia") %>% 
+   mutate(Value=as.numeric(Value),
+         Type = fct_reorder(Type, Value)) %>%
+  ggplot(aes(x=Type,
+             y=Value))+
+   geom_col(fill = CR_red)+
+  coord_flip()+
+  labs(title = "GDP Per person employed in each sector in Indonesia")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+           legend.position = "none")+
+  scale_y_continuous(labels = scales::comma)+
+  ylab("GDP in US Dollar")
+
+GDP_Vol_Indepth2
+  
+  
+```
+
+##**Greater China**
+
+Ion Exchange Sale in Greater China  Region
+
+```{r}
+CPI_Vol_gc <- master %>% 
+   filter(Region == "GREATER CHINA" & ValueCenter== "ION EXCHANGE RESINS" ) %>%
+  select(Region, Country, `Calendar year`, Volume_Demand, `Customer Price INdex`) %>%
+ # mutate(Volume_Demand = scale(Volume_Demand),`Customer Price INdex` = scale(`Customer Price INdex`)) %>%
+  gather(Indicator, Value, 4:5) %>% 
+  filter(!is.na(Value)) %>% 
+  group_by(Country, `Calendar year`,Indicator) %>% 
+  mutate(Value = sum(Value)) %>% 
+  ggplot(aes(x=Country,
+             y =Value))+
+  geom_bar(stat = "identity", fill = CR_red)+
+            theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 7),
+           legend.position = "none")+
+  facet_grid(Indicator~`Calendar year`, scales = "free_y")+
+  scale_y_continuous(labels = scales::comma)+
+  labs(title = "Customer Price Index vs Volume Demand in Greater China")
+
+GDP_Vol_gc <- master %>% 
+   filter(Region == "GREATER CHINA" & ValueCenter== "ION EXCHANGE RESINS" ) %>%
+  select(Region, Country, `Calendar year`, Volume_Demand, GDP) %>% 
+ # mutate(Volume_Demand = scale(Volume_Demand),GDP = scale(GDP)) %>%
+  gather(Indicator, Value, 4:5) %>% 
+  filter(!is.na(Value)) %>% 
+  group_by(Country, `Calendar year`,Indicator) %>% 
+  mutate(Value = sum(Value)) %>% 
+  ggplot(aes(x=Country,
+             y =Value))+
+  geom_bar(stat = "identity", fill = CR_red)+
+            theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 7),
+           legend.position = "none")+
+  facet_grid(Indicator~`Calendar year`, scales = "free_y")+
+  scale_y_continuous(labels = scales::comma)+
+  labs(title = "GDP vs Volume Demand in Asia Greater China")
+
+
+HTE_Vol_gc <- master %>% 
+   filter(Region == "GREATER CHINA" & ValueCenter== "ION EXCHANGE RESINS" ) %>%
+  select(Region, Country, `Calendar year`, Volume_Demand, `High Technology Exports`) %>% 
+#  mutate(Volume_Demand = scale(Volume_Demand),`High Technology Exports` = scale(`High Technology Exports`)) %>% 
+  gather(Indicator, Value, 4:5) %>% 
+  filter(!is.na(Value)) %>% 
+  group_by(Region,Country, `Calendar year`,Indicator) %>% 
+  mutate(Value = sum(Value)) %>% 
+  ggplot(aes(x=Country,
+             y =Value))+
+  geom_bar(stat = "identity", fill = CR_red)+
+            theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 7),
+           legend.position = "none")+
+  facet_grid(Indicator~`Calendar year`, scales = "free_y")+
+  scale_y_continuous(labels = scales::comma)+
+  labs(title = "High Technology Exports vs Volume Demand in Greater China")
+
+
+
+Pop_Vol_gc <- master %>% 
+   filter(Region == "GREATER CHINA" & ValueCenter== "ION EXCHANGE RESINS" ) %>%
+  select(Region, Country, `Calendar year`, Volume_Demand, population) %>% 
+ # mutate(Volume_Demand = scale(Volume_Demand),population = scale(population)) %>% 
+  gather(Indicator, Value, 4:5) %>% 
+ filter(!is.na(Value)) %>% 
+  group_by(Region,Country, `Calendar year`,Indicator) %>% 
+  mutate(Value = sum(Value)) %>% 
+  ggplot(aes(x=Country,
+             y =Value))+
+  geom_bar(stat = "identity", fill = CR_red)+
+            theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 7),
+           legend.position = "none")+
+  facet_grid(Indicator~`Calendar year`, scales = "free_y")+
+  scale_y_continuous(labels = scales::comma)+
+  labs(title = "Population vs Volume Demand in Greater China")
+
+
+CPI_Vol_gc
+GDP_Vol_gc
+HTE_Vol_gc
+Pop_Vol_gc
+
+GDP_Vol_gc_Indepth <- industry %>% 
+  gather(Type, Value, 2:7) %>% 
+  filter(Country == "China") %>% 
+  mutate(Value=as.numeric(Value),
+         Type = fct_reorder(Type, Value)) %>% 
+  ggplot(aes(x=Type,
+             y=Value))+
+  geom_col(fill = CR_red)+
+  coord_flip()+
+  labs(title = "GDP% in China")
+GDP_Vol_gc_Indepth
+
+GDP_Vol_gc_Indepth2 <- GDP_PPP %>% 
+  gather(Type, Value, 3:5) %>% 
+  filter(Country == "China") %>% 
+   mutate(Value=as.numeric(Value),
+         Type = fct_reorder(Type, Value)) %>%
+  ggplot(aes(x=Type,
+             y=Value))+
+   geom_col(fill = CR_red)+
+  coord_flip()+
+  labs(title = "GDP Per person employed in each sector in China")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+           legend.position = "none")+
+  scale_y_continuous(labels = scales::comma)+
+  ylab("GDP in US Dollar")
+
+GDP_Vol_gc_Indepth2
+  
+```
+
+##**Japan/Korea**
+
+Ion Exchange Sale in Japan/Korea Region
+
+```{r}
+CPI_Vol_kj <- master %>% 
+   filter(Region == "KOREA/JAPAN" & ValueCenter== "ION EXCHANGE RESINS" ) %>%
+  select(Region, Country, `Calendar year`, Volume_Demand, `Customer Price INdex`) %>%
+ # mutate(Volume_Demand = scale(Volume_Demand),`Customer Price INdex` = scale(`Customer Price INdex`)) %>%
+  gather(Indicator, Value, 4:5) %>% 
+  filter(!is.na(Value)) %>% 
+  group_by(Country, `Calendar year`,Indicator) %>% 
+  mutate(Value = sum(Value)) %>% 
+  ggplot(aes(x=Country,
+             y =Value))+
+  geom_bar(stat = "identity", fill = CR_red)+
+            theme(axis.text.x = element_text(angle = 0, hjust = 1, size = 7),
+           legend.position = "none")+
+  facet_grid(Indicator~`Calendar year`, scales = "free_y")+
+  scale_y_continuous(labels = scales::comma)+
+  labs(title = "Customer Price Index vs Volume in Japan")
+
+GDP_Vol_kj <- master %>% 
+   filter(Region == "KOREA/JAPAN" & ValueCenter== "ION EXCHANGE RESINS" ) %>%
+  select(Region, Country, `Calendar year`, Volume_Demand, GDP) %>% 
+ # mutate(Volume_Demand = scale(Volume_Demand),GDP = scale(GDP)) %>%
+  gather(Indicator, Value, 4:5) %>% 
+  filter(!is.na(Value)) %>% 
+  group_by(Country, `Calendar year`,Indicator) %>% 
+  mutate(Value = sum(Value)) %>% 
+  ggplot(aes(x=Country,
+             y = (Value=Value/1000000000)))+
+  geom_bar(stat = "identity", fill = CR_red)+
+            theme(axis.text.x = element_text(angle = 0, hjust = 1, size = 7),
+           legend.position = "none")+
+  facet_grid(Indicator~`Calendar year`, scales = "free_y")+
+  scale_y_continuous(labels = scales::comma)+
+  labs(title = "GDP vs Volume in Japan")+
+  ylab("Value in Billions" )
+
+
+HTE_Vol_kj <- master %>% 
+   filter(Region == "KOREA/JAPAN" & ValueCenter== "ION EXCHANGE RESINS" ) %>%
+  select(Region, Country, `Calendar year`, Volume_Demand, `High Technology Exports`) %>% 
+#  mutate(Volume_Demand = scale(Volume_Demand),`High Technology Exports` = scale(`High Technology Exports`)) %>% 
+  gather(Indicator, Value, 4:5) %>% 
+  filter(!is.na(Value)) %>% 
+  group_by(Region,Country, `Calendar year`,Indicator) %>% 
+  mutate(Value = sum(Value)) %>% 
+  ggplot(aes(x=Country,
+             y =Value))+
+  geom_bar(stat = "identity", fill = CR_red)+
+            theme(axis.text.x = element_text(angle = 0, hjust = 1, size = 7),
+           legend.position = "none")+
+  facet_grid(Indicator~`Calendar year`, scales = "free_y")+
+  scale_y_continuous(labels = scales::comma)+
+  labs(title = "High Technology Exports vs Volume in Japan")
+
+
+
+Pop_Vol_kj <- master %>% 
+   filter(Region == "KOREA/JAPAN" & ValueCenter== "ION EXCHANGE RESINS" ) %>%
+  select(Region, Country, `Calendar year`, Volume_Demand, population) %>% 
+ # mutate(Volume_Demand = scale(Volume_Demand),population = scale(population)) %>% 
+  gather(Indicator, Value, 4:5) %>% 
+ filter(!is.na(Value)) %>% 
+  group_by(Region,Country, `Calendar year`,Indicator) %>% 
+  mutate(Value = sum(Value)) %>% 
+  ggplot(aes(x=Country,
+             y =Value))+
+  geom_bar(stat = "identity", fill = CR_red)+
+            theme(axis.text.x = element_text(angle = 0, hjust = 1, size = 7),
+           legend.position = "none")+
+  facet_grid(Indicator~`Calendar year`, scales = "free_y")+
+  scale_y_continuous(labels = scales::comma)+
+  labs(title = "Population vs Volume in Japan")
+
+
+CPI_Vol_kj
+GDP_Vol_kj
+HTE_Vol_kj
+Pop_Vol_kj
+
+GDP_Vol_kj_Indepth <- industry %>% 
+  gather(Type, Value, 2:7) %>% 
+  filter(Country == "Japan") %>% 
+  mutate(Value=as.numeric(Value),
+         Type = fct_reorder(Type, Value)) %>% 
+  ggplot(aes(x=Type,
+             y=Value))+
+  geom_col(fill = CR_red)+
+  coord_flip()+
+  labs(title = "GDP% in Japan")
+GDP_Vol_kj_Indepth
+
+GDP_Vol_kj_Indepth2 <- GDP_PPP %>% 
+  gather(Type, Value, 3:5) %>% 
+  filter(Country == "Japan") %>% 
+   mutate(Value=as.numeric(Value),
+         Type = fct_reorder(Type, Value)) %>%
+  ggplot(aes(x=Type,
+             y=Value))+
+   geom_col(fill = CR_red)+
+  coord_flip()+
+  labs(title = "GDP Per person employed in each sector in Japan")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+           legend.position = "none")+
+  scale_y_continuous(labels = scales::comma)+
+  ylab("GDP in US Dollar")
+
+GDP_Vol_kj_Indepth2
+
+
+```
+
+#**North America Area**
+
+Ion Exchange Sale in North America
+```{r}
+ion_na <- dupsale %>% 
+          filter(Area == "NORTH AMERICA" & ValueCenter== "ION EXCHANGE RESINS" ) %>%
+          select(Date,Volume_Demand, Region ) %>% 
+           group_by(Region, Date) %>%
+          mutate(Volume_Demand = sum(Volume_Demand)) %>% 
+           ggplot(aes(x=Date,
+                    y = Volume_Demand))+
+          geom_point(color = CR_red)+
+          geom_line(color = CR_red)+
+          scale_y_continuous(labels = scales::comma)+
+          labs(title = "ION EXCHANGE RESINS-NORTH AMERICA Sale")+
+           xlab("Year")+
+            ylab("Demand")+
+            facet_wrap(~Region, ncol = 2, "free_y")+
+            theme(axis.text.x = element_text(angle = 45, hjust = 1),
+           legend.position = "none")
+ion_na 
+
+```
+
+##**United States**
+
+Ion Exchange Sale in United States
+```{r}
+CPI_Vol_us <- master %>% 
+   filter(Region == "UNITED STATES" & ValueCenter== "ION EXCHANGE RESINS" ) %>%
+  select(Region, Country, `Calendar year`, Volume_Demand, `Customer Price INdex`) %>%
+ # mutate(Volume_Demand = scale(Volume_Demand),`Customer Price INdex` = scale(`Customer Price INdex`)) %>%
+  gather(Indicator, Value, 4:5) %>% 
+  filter(!is.na(Value)) %>% 
+  group_by(Country, `Calendar year`,Indicator) %>% 
+  mutate(Value = sum(Value)) %>% 
+  ggplot(aes(x=Country,
+             y =Value))+
+  geom_bar(stat = "identity", fill = CR_red)+
+            theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 7),
+           legend.position = "none")+
+  facet_grid(Indicator~`Calendar year`, scales = "free_y")+
+  scale_y_continuous(labels = scales::comma)+
+  labs(title = "Customer Price Index vs Volume in UNITED STATES")
+
+GDP_Vol_us <- master %>% 
+   filter(Region == "UNITED STATES" & ValueCenter== "ION EXCHANGE RESINS" ) %>%
+  select(Region, Country, `Calendar year`, Volume_Demand, GDP) %>% 
+ # mutate(Volume_Demand = scale(Volume_Demand),GDP = scale(GDP)) %>%
+  gather(Indicator, Value, 4:5) %>% 
+  filter(!is.na(Value)) %>% 
+  group_by(Country, `Calendar year`,Indicator) %>% 
+  mutate(Value = sum(Value)) %>% 
+  ggplot(aes(x=Country,
+             y =Value))+
+  geom_bar(stat = "identity", fill = CR_red)+
+            theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 7),
+           legend.position = "none")+
+  facet_grid(Indicator~`Calendar year`, scales = "free_y")+
+  scale_y_continuous(labels = scales::comma)+
+  labs(title = "GDP vs Volume  in UNITED STATES")
+
+
+HTE_Vol_us <- master %>% 
+   filter(Region == "UNITED STATES" & ValueCenter== "ION EXCHANGE RESINS" ) %>%
+  select(Region, Country, `Calendar year`, Volume_Demand, `High Technology Exports`) %>% 
+#  mutate(Volume_Demand = scale(Volume_Demand),`High Technology Exports` = scale(`High Technology Exports`)) %>% 
+  gather(Indicator, Value, 4:5) %>% 
+  filter(!is.na(Value)) %>% 
+  group_by(Region,Country, `Calendar year`,Indicator) %>% 
+  mutate(Value = sum(Value)) %>% 
+  ggplot(aes(x=Country,
+             y =Value))+
+  geom_bar(stat = "identity", fill = CR_red)+
+            theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 7),
+           legend.position = "none")+
+  facet_grid(Indicator~`Calendar year`, scales = "free_y")+
+  scale_y_continuous(labels = scales::comma)+
+  labs(title = "High Technology Exports vs Volume in UNITED STATES")
+
+
+
+Pop_Vol_us <- master %>% 
+   filter(Region == "UNITED STATES" & ValueCenter== "ION EXCHANGE RESINS" ) %>%
+  select(Region, Country, `Calendar year`, Volume_Demand, population) %>% 
+ # mutate(Volume_Demand = scale(Volume_Demand),population = scale(population)) %>% 
+  gather(Indicator, Value, 4:5) %>% 
+ filter(!is.na(Value)) %>% 
+  group_by(Region,Country, `Calendar year`,Indicator) %>% 
+  mutate(Value = sum(Value)) %>% 
+  ggplot(aes(x=Country,
+             y =Value))+
+  geom_bar(stat = "identity", fill = CR_red)+
+            theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 7),
+           legend.position = "none")+
+  facet_grid(Indicator~`Calendar year`, scales = "free_y")+
+  scale_y_continuous(labels = scales::comma)+
+  labs(title = "Population vs Volume in UNITED STATES")
+
+
+CPI_Vol_us
+GDP_Vol_us
+HTE_Vol_us
+Pop_Vol_us
+
+GDP_Vol_us_Indepth <- industry %>% 
+  gather(Type, Value, 2:7) %>% 
+  filter(Country == "United States") %>% 
+  mutate(Value=as.numeric(Value),
+         Type = fct_reorder(Type, Value)) %>% 
+  ggplot(aes(x=Type,
+             y=Value))+
+  geom_col(fill = CR_red)+
+  coord_flip()+
+  labs(title = "GDP% in UNITED STATES")
+GDP_Vol_us_Indepth
+
+GDP_Vol_us_Indepth2 <- GDP_PPP %>% 
+  gather(Type, Value, 3:5) %>% 
+  filter(Country == "United States") %>% 
+   mutate(Value=as.numeric(Value),
+         Type = fct_reorder(Type, Value)) %>%
+  ggplot(aes(x=Type,
+             y=Value))+
+   geom_col(fill = CR_red)+
+  coord_flip()+
+  labs(title = "GDP Per person employed in each sector in UNITED STATES")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+           legend.position = "none")+
+  scale_y_continuous(labels = scales::comma)+
+  ylab("GDP in US Dollar")
+
+GDP_Vol_us_Indepth2
+```
+
+
+#*Industry Specific Factors*
+
+- Petroleum 
+- Coal
+- Mineral
+- Natural Gas
+- Metals
+
+##Petroleum Stock Prices
+Petroleum stocks prices were also observed to be high in 2015-2016
+Petroleum products like fuel oils are used for heating and electricity generation
+While Petroleum vs crude oil prices are high in 2016, this could be accounted for high demand in the year 2016
+
+If the prices of the stocks are going up, the demand too is increasing for such products
+
+```{r}
+pet_stocks<-read.csv(here("Data", "Petr_Stocks_Barrels.csv"))
+pet_stocks$Value<- as.numeric(pet_stocks$Value)
+
+clean_pet<-pet_stocks %>%
+  filter(!(Value == "Not Applicable")) %>% 
+  filter(Description == "Total Petroleum Stocks") %>% 
+  mutate(Year = substr(YYYYMM, 1, nchar(YYYYMM) - 2)) %>% 
+  filter(Year == c("2014", "2015", "2016", "2017", "2018")) %>% 
+  select(Year, Value) %>% 
+  group_by(Year) %>% 
+  summarise_at(vars(Value), mean,  na.rm = TRUE)
+clean_pet$Year<- as.Date(clean_pet$Year, format = "%Y")
+
+pet_plot<- clean_pet %>% 
+  ggplot(aes(x = Year, y = Value ))+
+ geom_line(na.rm=TRUE, color = "#E83536") +  
+ # geom_bar(stat="identity", fill =  "steelblue")+
+ # geom_text(aes(label= round(Value,digits = 2)), vjust=1.6, color = "white", size=3.5)+
+  labs(title = "Petroleum stock prices", subtitle = "Million Barrels")+
+        xlab("Year")+
+        ylab("Stock Prices")+
+  theme_minimal()
+ggplotly(pet_plot)
+
+```
+
+##*Crude Oil Prices*
+
+Crude oil and its products as feedstock are used for producing ion-exchange materials
+It was observed that in 2015 - 2016, the price of the crude oil was relatively cheap
+This could mean that ion exchange materials could be made in bulk and supplied in bulk too
+
+
+```{r}
+OPEC <- read.csv(here("Data", "01_org_of_petro_exporting_countries.csv"))
+
+plot_opec<-OPEC %>% 
+  mutate(Years = as.Date(Date, format = "%m/%d/%Y")) %>% 
+  ggplot(aes(x=Years, y = (Value)))+ 
+   geom_line(na.rm=TRUE, color = "#E83536") +  
+           ggtitle("Price of Crude Oil by Petroleum Exporting Countries") +
+           xlab("Date") + ylab("Crude Oil Price") +
+          # scale_x_date(labels=date_format ("%b %y")) +
+           theme(plot.title = element_text(lineheight=.8, face="bold", 
+                                          size = 10)) +
+           theme(text = element_text(size=10))
+ggplotly(plot_opec)
+
+```
+
+##Natural Gas Prices by Industries
+Natural gas is a non-renewable hydrocarbon used as a source of energy for heating, cooking, and electricity generation.
+Ion Exchange helps address the unique water resource management needs of the hydrocarbon exploration and production industry.
+The prices of the natural gas (delivery to the residential sector) goes up in 2016 from 2015, hence we could infer that the demand for such products too would go up in the same year
+
+```{r}
+natural<- read.csv(here("Data", "natural_gas_price.csv"))
+
+natural$Value <- as.numeric(natural$Value)
+natural_plot<-natural %>% 
+  select(YYYYMM, Value, Description) %>% 
+  filter(grepl("Natural Gas Price,", Description, fixed = TRUE), !Value == "Not Available" ) %>% 
+ # filter(str_detect(YYYYMM,"^2014") | str_detect(YYYYMM,"^2015") | str_detect(YYYYMM,"^2016") |       str_detect(YYYYMM,"^2017") | str_detect(YYYYMM,"^2018") ) %>% 
+  mutate(Year = substr(YYYYMM, 1, nchar(YYYYMM) - 2)) %>% 
+  filter(Year == c("2014", "2015", "2016", "2017", "2018")) %>% 
+  filter(!Description == "Natural Gas Price, Wellhead" ) %>% 
+  filter(!Description == "Natural Gas Price, Citygate") %>% 
+  select(Year, Value, Description) %>% 
+  group_by(Year, Description) %>% 
+  summarise(Price = mean(Value))
+
+colnames(natural_plot)<-c("Year", "Industry", "Price")
+natural_plot %>% 
+  ggplot(aes(y = Price, x = Year, group = Industry))+
+  geom_line(aes(color= Industry), size = 1.5)+
+  #geom_bar(aes(y = Price, x = Year, fill =Industry), stat="identity")+
+  labs(title = "Natural Gas Prices by Industries", subtitle = "Dollars per Thousand Cubic Feet")+
+        xlab("Years")+
+        ylab("Natural Gas Prices")+
+  theme_minimal()
+```
+
+##Further Analysis Region and Area wise
+###Point to be remember: The volume demand for Ion Exchange Technology is highest in Asia Specific Region in the years 2015 and 2016 (December)
+
+##Coal Rents
+Coal rents are the difference between the value of both hard and soft coal production at world prices and their total costs of production as a % of GDP
+
+As we saw the coal consumption impacting the demand of Ion Exchange products, if the prices of coal rents increase in **(2015-2016)**in **Mongolia**, we could say that this might be factor that is also impacting the volume demand of the water based products used in Ion Exchange 
+
+```{r}
+coal<-read.csv(here("Data", "coal_rents.csv"))
+
+colnames(coal)[1:2]<- c("Country","Code")
+
+coal <- gather(coal,
+               key = "Year",
+               value = "Value",
+               -(Country:Code)) %>%
+                mutate(Year=str_remove(Year,"[Xx]"),
+                #Date=as.Date(paste0(Year,"-01-01")),
+                Factor="Coal Rents (% of GDP)")
+
+coal$Value<-as.numeric(coal$Value)
+coal<-coal[,-2]
+
+coal_rents<- coal %>% 
+  filter(Year %in% c("2014","2015","2016","2017","2018")) %>% 
+  arrange_(~desc(Value)) %>%
+ # group_by_(~ Country) %>%
+ head(n = 20) %>% 
+  mutate(Coal_Rents=round(Value, digits = 2)) %>% 
+   ggplot(aes(x = Year, y = Coal_Rents, group = Country)) +
+  geom_line(aes(color= Country), size = 1.5)+
+   # geom_point(aes(color = factor(Country))) +
+  labs(title = "Top Countries by Coal Rents", subtitle = "% of GDP")+
+        xlab("Years")+
+        ylab("Coal rents (% of GDP)")+
+  theme_classic()
+ggplotly(coal_rents)
+```
+
+##*Mineral Depletion*
+In industrial and domestic applications, ion-exchange resins are used for the removal of calcium, magnesium, iron, and manganese salts from water (water softening), for purification of sugar, and for concentration of valuable elements, such as gold, silver, and uranium from mineral ores.
+
+Mineral depletion is the ratio of the value of the stock of mineral resources to the remaining reserve lifetime. 
+It covers tin, gold, lead, zinc, iron, copper, nickel, silver, bauxite, and phosphate
+
+Mineral prices are also highest in **China** through the years 2014 to 2017
+
+```{r}
+mineral<-read.csv(here("Data","mineral_depletion.csv"))
+
+colnames(mineral)[1]<-c("Country")
+
+
+mineral <- gather(mineral,
+               key = "Year",
+               value = "Value",
+               -(Country)) %>%
+                mutate(Year=str_remove(Year,"[Xx]"),
+                Factor="Mineral Depletion (Current US$)")
+
+
+mineral$Value<-as.numeric(mineral$Value)
+
+mineral_plot<- mineral %>% 
+  filter(Year %in% c("2014","2015","2016","2017","2018")) %>% 
+  arrange_(~desc(Value)) %>%
+ # group_by_(~ Country) %>%
+  head(n=20) %>% 
+  mutate(Mineral_Depletion= round(log(Value),digits = 2)) %>% 
+   ggplot(aes(x = Year, y = Mineral_Depletion, group = Country )) +
+  geom_line(aes(color= Country), size = 1.5)+
+#ggplot(data, aes(fill=condition, y=value, x=specie)) + 
+  #  geom_bar(position="dodge", stat="identity")+
+  #  geom_point(aes(color = factor(Year))) +
+  #geom_line()+
+  labs(title = "Top countries by Mineral Depletion", subtitle = "Current US Dollars")+
+        xlab("Years")+
+        ylab("Mineral Depletion")+
+  theme_classic()
+ggplotly(mineral_plot)
+
+```
+
+
+##Ores and Metals Imports
+Common heavy metals like Nickel, Chrome, Zinc, Cadmium and Copper are typical byproducts of industrial and laboratory processes and can pose considerable health risks to human beings.
+It is required that their presence in wastewater be reduced to legal levels before being discharged into the environment 
+Ion Exchange also helps the mining industry recover valuable metals in the most efficient, profitable and environmentally sustainable manner.
+If the % of metal imports in a country is high for a specific time, the need to recover these metals would also grow
+
+The process of recovering these metals and reducing their legal risk levels is done through ion exchange technology
+The second highest ores and metal imports were done in China in 2016, this is in sync with our demand of ion exchange resins in Greater China in 2016 followed by East and Asia Specific
+```{r}
+metal<-read.csv(here("Data","metal_imports.csv"))
+colnames(metal)[1:2]<-c("Country", "Factor")
+
+metal<-metal %>% gather(key = "Year",
+          value = "Value",
+          -(Country:Factor)) %>%
+          mutate(Year=str_remove(Year,"[Xx]"))
+
+metal_plot<- metal %>% 
+filter(Year %in% c("2016","2017","2018")) %>% 
+  filter(Value >= 5) %>% 
+  arrange_(~desc(Value)) %>%
+  group_by_(~ Country) %>%
+  #head(n=20) %>% 
+  #mutate(Mineral_Depletion= round(log(Value),digits = 2)) %>% 
+   ggplot(aes(x = as.factor(Year), y = round(Value, digits=2), fill = Country )) +
+#ggplot(data, aes(fill=condition, y=value, x=specie)) + 
+    geom_bar(position="dodge", stat="identity")+
+  #geom_line()+
+  labs(title = "Ores and metals imports (% of merchandise imports)")+
+        xlab("Years")+
+        ylab("% of merchandise metal imports")+
+  theme_classic()
+ggplotly(metal_plot)
+```
+
+#Further Analysis on United States 
+
+##United States is one of the top 10 Petroleum Production Countries
+
+When it comes to a Specific Country like United States - It is one of the top 10 Petroleum Production Countries
+The demand here has to be high for it prodcues Petroleum and ion exchange is used for power generation and use of petroleum is a part of that process
+We saw the demand for ion exchange going up in 2015 (10th month) and 2016 (8-9th month)
+
+
+```{r}
+top10<-read.csv(here("Data", "top10_petroleum_production.csv"))
+
+colnames(top10)<-c("Country","Petroleum_Production")
+
+top<-top10 %>% 
+  mutate(Petroleum_Produced = sort((Petroleum_Production/1000000)) ) %>% 
+  ggplot(aes(x = Country, y =Petroleum_Produced ))+
+  geom_bar(stat="identity", fill =  "#E83536")+
+  labs(title = "Top 10 Petroleum Production Countries")+
+        xlab("Countries")+
+        ylab("Production")+
+  theme_compassred()
+ggplotly(top) 
+
+
+
+```
+
+##HydroCarbon
+
+Ion exchange technology is dependent on hydrocarbons. The hydrocarbon stock prices were also the highest during the same duration in the United States
+
+This could directly impact the sales again
+```{r}
+hydro_stocks<- read.csv(here("Data","US_hydro_stocks.csv"))
+hydro_stocks$Month <- as.yearmon(hydro_stocks$Month, format = "%b-%y")
+hydro_stocks$Month<-as.Date(hydro_stocks$Month)
+
+stock<-hydro_stocks %>% 
+  mutate(Stocks = Hydrocarbon.Gas.Liquids_Stocks) %>% 
+ # mutate(Month = as.Date(Month,"%b-%y")) %>% 
+    filter(!is.na(Stocks)) %>% 
+  ggplot(aes(x = (Month), y = Stocks ))+
+ geom_line(color =  "#E83536", size = 0.5)+
+# geom_bar(stat="identity", fill =  "#E83536")+
+  #geom_text(aes(label= Hydrocarbon.Gas.Liquids_Stocks), vjust=1.6, hjust=-5, color = "black", size=3.5)+
+  labs(title = "Hydrocarbon gas liquids stocks (Thousand Barrels)")+
+        xlab("Timeline")+
+        ylab("Hydrocarbon Stocks")+
+  theme_compassred()+
+  theme(axis.text.x = element_text(face="bold", 
+                           size=9, angle=45))
+ggplotly(stock)
+```
+
+
+
+

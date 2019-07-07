@@ -1,0 +1,1 @@
+"0","plot(roc(testing$class,pred_rf_prob), print.auc = TRUE, col = ""blue"")"
